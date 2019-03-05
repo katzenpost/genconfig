@@ -71,6 +71,11 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 	cfg.Server = new(sConfig.Server)
 	cfg.Server.Identifier = fmt.Sprintf("%s.eXaMpLe.org", n)
 	cfg.Server.Addresses = []string{fmt.Sprintf("127.0.0.1:%d", s.lastPort)}
+	cfg.Server.AltAddresses = map[string][]string{
+		"TCP":   []string{fmt.Sprintf("localhost:%d", s.lastPort)},
+		"torv2": []string{"onedaythiswillbea.onion:2323"},
+	}
+
 	cfg.Server.DataDir = filepath.Join(s.baseDir, n)
 	os.Mkdir(cfg.Server.DataDir, 0700)
 	cfg.Server.IsProvider = isProvider
@@ -141,10 +146,6 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 		s.providerIdx++
 
 		cfg.Provider = new(sConfig.Provider)
-		cfg.Provider.AltAddresses = map[string][]string{
-			"TCP":   []string{fmt.Sprintf("localhost:%d", s.lastPort)},
-			"torv2": []string{"onedaythiswillbea.onion:2323"},
-		}
 
 		loopCfg := new(sConfig.Kaetzchen)
 		loopCfg.Capability = "loop"
@@ -216,13 +217,7 @@ func (s *katzenpost) genAuthConfig() error {
 }
 
 func (s *katzenpost) genVotingAuthoritiesCfg(numAuthorities int) error {
-	parameters := &vConfig.Parameters{
-		MixLambda:       1,
-		MixMaxDelay:     10000,
-		SendLambda:      123,
-		SendShift:       12,
-		SendMaxInterval: 123456,
-	}
+	parameters := &vConfig.Parameters{}
 	configs := []*vConfig.Config{}
 
 	// initial generation of key material for each authority
