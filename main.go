@@ -69,7 +69,7 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 
 	// Server section.
 	cfg.Server = new(sConfig.Server)
-	cfg.Server.Identifier = fmt.Sprintf("%s.eXaMpLe.org", n)
+	cfg.Server.Identifier = n
 	cfg.Server.Addresses = []string{fmt.Sprintf("127.0.0.1:%d", s.lastPort)}
 	cfg.Server.AltAddresses = map[string][]string{
 		"TCP":   []string{fmt.Sprintf("localhost:%d", s.lastPort)},
@@ -83,25 +83,16 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 	// Debug section.
 	cfg.Debug = new(sConfig.Debug)
 
-	// Generate keys
-	priv := filepath.Join(cfg.Server.DataDir, "identity.private.pem")
-	public := filepath.Join(cfg.Server.DataDir, "identity.public.pem")
-	idKey, err := eddsa.Load(priv, public, rand.Reader)
-	if err != nil {
-		return err
-	}
-	cfg.Debug.IdentityKey = idKey
-
 	// PKI section.
 	if isVoting {
 		peers := []*sConfig.Peer{}
 		for _, peer := range s.votingAuthConfigs {
-			idKey, err := peer.Debug.IdentityKey.PublicKey().MarshalText()
+			idKey, err := apk(peer).MarshalText()
 			if err != nil {
 				return err
 			}
 
-			linkKey, err := peer.Debug.IdentityKey.PublicKey().ToECDH().MarshalText()
+			linkKey, err := alk(peer).MarshalText()
 			if err != nil {
 				return err
 			}
@@ -207,7 +198,6 @@ func (s *katzenpost) genAuthConfig() error {
 
 	// Debug section.
 	cfg.Debug = new(aConfig.Debug)
-	cfg.Debug.IdentityKey = idKey
 
 	if err := cfg.FixupAndValidate(); err != nil {
 		return err
@@ -231,7 +221,7 @@ func (s *katzenpost) genVotingAuthoritiesCfg(numAuthorities int) error {
 		}
 		cfg.Parameters = parameters
 		cfg.Authority = &vConfig.Authority{
-			Identifier: fmt.Sprintf("authority-%v.example.org", i),
+			Identifier: fmt.Sprintf("authority-%v", i),
 			Addresses:  []string{fmt.Sprintf("127.0.0.1:%d", s.lastPort)},
 			DataDir:    filepath.Join(s.baseDir, fmt.Sprintf("authority-%d", i)),
 		}
@@ -251,18 +241,18 @@ func (s *katzenpost) genVotingAuthoritiesCfg(numAuthorities int) error {
 		}
 		configs = append(configs, cfg)
 		authorityPeer := &vConfig.AuthorityPeer{
-			IdentityPublicKey: cfg.Debug.IdentityKey.PublicKey(),
-			LinkPublicKey:     cfg.Debug.IdentityKey.PublicKey().ToECDH(),
+			IdentityPublicKey: apk(cfg),
+			LinkPublicKey:     alk(cfg),
 			Addresses:         cfg.Authority.Addresses,
 		}
-		peersMap[cfg.Debug.IdentityKey.PublicKey().ByteArray()] = authorityPeer
+		peersMap[apk(cfg).ByteArray()] = authorityPeer
 	}
 
 	// tell each authority about it's peers
 	for i := 0; i < numAuthorities; i++ {
 		peers := []*vConfig.AuthorityPeer{}
 		for id, peer := range peersMap {
-			if !bytes.Equal(id[:], configs[i].Debug.IdentityKey.PublicKey().Bytes()) {
+			if !bytes.Equal(id[:], apk(configs[i]).Bytes()) {
 				peers = append(peers, peer)
 			}
 		}
@@ -279,13 +269,13 @@ func (s *katzenpost) generateWhitelist() ([]*aConfig.Node, []*aConfig.Node, erro
 		if nodeCfg.Server.IsProvider {
 			provider := &aConfig.Node{
 				Identifier:  nodeCfg.Server.Identifier,
-				IdentityKey: nodeCfg.Debug.IdentityKey.PublicKey(),
+				IdentityKey: spk(nodeCfg),
 			}
 			providers = append(providers, provider)
 			continue
 		}
 		mix := &aConfig.Node{
-			IdentityKey: nodeCfg.Debug.IdentityKey.PublicKey(),
+			IdentityKey: spk(nodeCfg),
 		}
 		mixes = append(mixes, mix)
 	}
@@ -300,13 +290,13 @@ func (s *katzenpost) generateVotingWhitelist() ([]*vConfig.Node, []*vConfig.Node
 		if nodeCfg.Server.IsProvider {
 			provider := &vConfig.Node{
 				Identifier:  nodeCfg.Server.Identifier,
-				IdentityKey: nodeCfg.Debug.IdentityKey.PublicKey(),
+				IdentityKey: spk(nodeCfg),
 			}
 			providers = append(providers, provider)
 			continue
 		}
 		mix := &vConfig.Node{
-			IdentityKey: nodeCfg.Debug.IdentityKey.PublicKey(),
+			IdentityKey: spk(nodeCfg),
 		}
 		mixes = append(mixes, mix)
 	}
@@ -499,4 +489,37 @@ func saveCfg(cfg interface{}) error {
 	// Serialize the descriptor.
 	enc := toml.NewEncoder(f)
 	return enc.Encode(cfg)
+}
+
+func apk(a *vConfig.Config) *eddsa.PublicKey {
+	priv := filepath.Join(a.Authority.DataDir, "identity.private.pem")
+	public := filepath.Join(a.Authority.DataDir, "identity.public.pem")
+	idKey, err := eddsa.Load(priv, public, rand.Reader)
+	if err != nil {
+		return nil
+	} else {
+		return idKey.PublicKey()
+	}
+}
+
+func spk(a *sConfig.Config) *eddsa.PublicKey {
+	priv := filepath.Join(a.Server.DataDir, "identity.private.pem")
+	public := filepath.Join(a.Server.DataDir, "identity.public.pem")
+	idKey, err := eddsa.Load(priv, public, rand.Reader)
+	if err != nil {
+		return nil
+	} else {
+		return idKey.PublicKey()
+	}
+}
+
+func alk(a *vConfig.Config) *ecdh.PublicKey {
+	linkpriv := filepath.Join(a.Authority.DataDir, "link.private.pem")
+	linkpublic := filepath.Join(a.Authority.DataDir, "link.public.pem")
+	linkKey, err := ecdh.Load(linkpriv, linkpublic, rand.Reader)
+	if err != nil {
+		return nil
+	} else {
+		return linkKey.PublicKey()
+	}
 }
