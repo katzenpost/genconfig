@@ -26,13 +26,12 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	vConfig "github.com/katzenpost/authority/voting/server/config"
-	aConfig "github.com/katzenpost/authority/nonvoting/server/config"
-	"github.com/katzenpost/core/crypto/ecdh"
-	"github.com/katzenpost/core/crypto/eddsa"
-	"github.com/katzenpost/core/crypto/rand"
-	pConfig "github.com/katzenpost/mailproxy/config"
-	sConfig "github.com/katzenpost/server/config"
+	vConfig "github.com/katzenpost/katzenpost/authority/voting/server/config"
+	aConfig "github.com/katzenpost/katzenpost/authority/nonvoting/server/config"
+	"github.com/katzenpost/katzenpost/core/crypto/ecdh"
+	"github.com/katzenpost/katzenpost/core/crypto/eddsa"
+	"github.com/katzenpost/katzenpost/core/crypto/rand"
+	sConfig "github.com/katzenpost/katzenpost/server/config"
 )
 
 const (
@@ -302,69 +301,6 @@ func (s *katzenpost) generateVotingWhitelist() ([]*vConfig.Node, []*vConfig.Node
 	}
 
 	return providers, mixes, nil
-}
-
-func (s *katzenpost) newMailProxy(user, provider string, privateKey *ecdh.PrivateKey) (*pConfig.Config, error) {
-	const (
-		proxyLogFile = "katzenpost.log"
-		authID       = "testAuth"
-	)
-
-	cfg := new(pConfig.Config)
-
-	dispName := fmt.Sprintf("mailproxy-%v@%v", user, provider)
-
-	// Proxy section.
-	cfg.Proxy = new(pConfig.Proxy)
-	cfg.Proxy.POP3Address = fmt.Sprintf("127.0.0.1:%d", s.lastPort)
-	s.lastPort++
-	cfg.Proxy.SMTPAddress = fmt.Sprintf("127.0.0.1:%d", s.lastPort)
-	s.lastPort++
-	cfg.Proxy.DataDir = filepath.Join(s.baseDir, dispName)
-
-	// Logging section.
-	cfg.Logging = new(pConfig.Logging)
-	cfg.Logging.File = proxyLogFile
-	cfg.Logging.Level = "DEBUG"
-
-	// Management section.
-	cfg.Management = new(pConfig.Management)
-	cfg.Management.Enable = true
-
-	// Authority section.
-	cfg.NonvotingAuthority = make(map[string]*pConfig.NonvotingAuthority)
-	auth := new(pConfig.NonvotingAuthority)
-	auth.Address = fmt.Sprintf("127.0.0.1:%d", basePort)
-	auth.PublicKey = s.authIdentity.PublicKey()
-	cfg.NonvotingAuthority[authID] = auth
-
-	// Account section.
-	acc := new(pConfig.Account)
-	acc.User = user
-	acc.Provider = provider
-	acc.NonvotingAuthority = authID
-	acc.LinkKey = privateKey
-	acc.IdentityKey = privateKey
-	// acc.StorageKey = privateKey
-	cfg.Account = append(cfg.Account, acc)
-
-	// UpstreamProxy section.
-	/*
-		cfg.UpstreamProxy = new(pConfig.UpstreamProxy)
-		cfg.UpstreamProxy.Type = "tor+socks5"
-		// cfg.UpstreamProxy.Network = "unix"
-		// cfg.UpstreamProxy.Address = "/tmp/socks.socket"
-		cfg.UpstreamProxy.Network = "tcp"
-		cfg.UpstreamProxy.Address = "127.0.0.1:1080"
-	*/
-
-	// Recipients section.
-	cfg.Recipients = s.recipients
-
-	if err := cfg.FixupAndValidate(); err != nil {
-		return nil, err
-	}
-	return cfg, nil
 }
 
 func main() {
