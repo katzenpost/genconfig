@@ -26,8 +26,8 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	vConfig "github.com/katzenpost/katzenpost/authority/voting/server/config"
 	aConfig "github.com/katzenpost/katzenpost/authority/nonvoting/server/config"
+	vConfig "github.com/katzenpost/katzenpost/authority/voting/server/config"
 	"github.com/katzenpost/katzenpost/core/crypto/ecdh"
 	"github.com/katzenpost/katzenpost/core/crypto/eddsa"
 	"github.com/katzenpost/katzenpost/core/crypto/rand"
@@ -35,9 +35,9 @@ import (
 )
 
 const (
-	basePort    = 30000
-	nrNodes     = 6
-	nrProviders = 2
+	basePort      = 30000
+	nrNodes       = 6
+	nrProviders   = 2
 	nrAuthorities = 3
 )
 
@@ -45,9 +45,9 @@ type katzenpost struct {
 	baseDir   string
 	logWriter io.Writer
 
-	authConfig    *aConfig.Config
+	authConfig        *aConfig.Config
 	votingAuthConfigs []*vConfig.Config
-	authIdentity  *eddsa.PrivateKey
+	authIdentity      *eddsa.PrivateKey
 
 	nodeConfigs []*sConfig.Config
 	lastPort    uint16
@@ -310,13 +310,15 @@ func main() {
 	voting := flag.Bool("v", false, "Generate voting configuration")
 	nrVoting := flag.Int("nv", nrAuthorities, "Generate voting configuration")
 	baseDir := flag.String("b", "", "Path to use as baseDir option")
+	dataDir := flag.String("d", "", "Path to override dataDir, useful with volume mount paths")
 	flag.Parse()
 	s := &katzenpost{
 		lastPort:   basePort + 1,
 		recipients: make(map[string]*ecdh.PublicKey),
 	}
 
-	bd, err := filepath.Abs(*baseDir); if err != nil {
+	bd, err := filepath.Abs(*baseDir)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create base directory: %v\n", err)
 		os.Exit(-1)
 		return
@@ -361,7 +363,7 @@ func main() {
 			aCfg.Providers = providerWhitelist
 		}
 		for _, aCfg := range s.votingAuthConfigs {
-			if err := saveCfg(aCfg); err != nil {
+			if err := saveCfg(aCfg, *dataDir); err != nil {
 				log.Fatalf("Failed to saveCfg of authority with %s", err)
 			}
 		}
@@ -374,13 +376,13 @@ func main() {
 			log.Fatalf("Failed to generateWhitelist with %s", err)
 		}
 
-		if err := saveCfg(s.authConfig); err != nil {
+		if err := saveCfg(s.authConfig, *dataDir); err != nil {
 			log.Fatalf("Failed to saveCfg of authority with %s", err)
 		}
 	}
 	// write the mixes keys and configs to disk
 	for _, v := range s.nodeConfigs {
-		if err := saveCfg(v); err != nil {
+		if err := saveCfg(v, *dataDir); err != nil {
 			log.Fatalf("%s", err)
 		}
 	}
@@ -403,18 +405,18 @@ func basedir(cfg interface{}) string {
 func identifier(cfg interface{}) string {
 	switch cfg.(type) {
 	case *sConfig.Config:
-		return cfg.(*sConfig.Config).Server.Identifier
+		return "node"
 	case *aConfig.Config:
 		return "nonvoting"
 	case *vConfig.Config:
-		return cfg.(*vConfig.Config).Authority.Identifier
+		return "authority"
 	default:
 		log.Fatalf("identifier() passed unexpected type")
 		return ""
 	}
 }
 
-func saveCfg(cfg interface{}) error {
+func saveCfg(cfg interface{}, dataDir string) error {
 	fileName := filepath.Join(basedir(cfg), fmt.Sprintf("%s.toml", identifier(cfg)))
 	log.Printf("saveCfg of %s", fileName)
 	f, err := os.Create(fileName)
@@ -422,6 +424,21 @@ func saveCfg(cfg interface{}) error {
 		return err
 	}
 	defer f.Close()
+
+	// override each cfg DataDir for use with docker volume mounts
+	if dataDir != "" {
+		switch cfg.(type) {
+		case *sConfig.Config:
+			cfg.(*sConfig.Config).Server.DataDir = dataDir
+		case *aConfig.Config:
+			cfg.(*aConfig.Config).Authority.DataDir = dataDir
+		case *vConfig.Config:
+			cfg.(*vConfig.Config).Authority.DataDir = dataDir
+		default:
+			log.Fatalf("identifier() passed unexpected type")
+		}
+	}
+
 	// Serialize the descriptor.
 	enc := toml.NewEncoder(f)
 	return enc.Encode(cfg)
