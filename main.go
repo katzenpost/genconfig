@@ -448,6 +448,14 @@ func apk(a *vConfig.Config) sign.PublicKey {
 
 	identityPrivateKey, identityPublicKey := cert.Scheme.NewKeypair()
 
+	err := pem.FromFile(pubFile, identityPublicKey)
+
+	if err == nil {
+		return identityPublicKey
+	}
+
+	identityPrivateKey, identityPublicKey = cert.Scheme.NewKeypair()
+
 	pem.ToFile(pubFile, identityPublicKey)
 	pem.ToFile(privFile, identityPrivateKey)
 
@@ -460,6 +468,14 @@ func spk(a *sConfig.Config) sign.PublicKey {
 
 	identityPrivateKey, identityPublicKey := cert.Scheme.NewKeypair()
 
+	err := pem.FromFile(pubFile, identityPublicKey)
+
+	if err == nil {
+		return identityPublicKey
+	}
+
+	identityPrivateKey, identityPublicKey = cert.Scheme.NewKeypair()
+
 	pem.ToFile(pubFile, identityPublicKey)
 	pem.ToFile(privFile, identityPrivateKey)
 
@@ -470,9 +486,19 @@ func alk(a *vConfig.Config) wire.PublicKey {
 	pubFile := filepath.Join(a.Authority.DataDir, "link.public.pem")
 	privFile := filepath.Join(a.Authority.DataDir, "link.private.pem")
 
-	kp := wire.DefaultScheme.GenerateKeypair(rand.Reader)
+	privKey := wire.DefaultScheme.GenerateKeypair(rand.Reader)
+	pubKey := privKey.PublicKey()
 
-	pem.ToFile(pubFile, kp.PublicKey())
-	pem.ToFile(privFile, kp)
-	return kp.PublicKey()
+	err := pem.FromFile(privFile, pubKey)
+
+	if err == nil {
+		return pubKey
+	}
+
+	privKey = wire.DefaultScheme.GenerateKeypair(rand.Reader)
+	pubKey = privKey.PublicKey()
+
+	pem.ToFile(pubFile, pubKey)
+	pem.ToFile(privFile, privKey)
+	return pubKey
 }
