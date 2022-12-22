@@ -28,9 +28,13 @@ import (
 	"github.com/BurntSushi/toml"
 	aConfig "github.com/katzenpost/katzenpost/authority/nonvoting/server/config"
 	vConfig "github.com/katzenpost/katzenpost/authority/voting/server/config"
+	"github.com/katzenpost/katzenpost/core/crypto/cert"
 	"github.com/katzenpost/katzenpost/core/crypto/ecdh"
 	"github.com/katzenpost/katzenpost/core/crypto/eddsa"
+	"github.com/katzenpost/katzenpost/core/crypto/pem"
 	"github.com/katzenpost/katzenpost/core/crypto/rand"
+	"github.com/katzenpost/katzenpost/core/crypto/sign"
+	"github.com/katzenpost/katzenpost/core/wire"
 	sConfig "github.com/katzenpost/katzenpost/server/config"
 )
 
@@ -96,9 +100,9 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 				return err
 			}
 			p := &sConfig.Peer{
-				Addresses:         peer.Authority.Addresses,
-				IdentityPublicKey: string(idKey),
-				LinkPublicKey:     string(linkKey),
+				Addresses:            peer.Authority.Addresses,
+				IdentityPublicKeyPem: string(idKey),
+				LinkPublicKeyPem:     string(linkKey),
 			}
 			if len(peer.Authority.Addresses) == 0 {
 				panic("wtf")
@@ -120,7 +124,7 @@ func (s *katzenpost) genNodeConfig(isProvider bool, isVoting bool) error {
 		if err != nil {
 			return err
 		}
-		cfg.PKI.Nonvoting.PublicKey = string(idKey)
+		cfg.PKI.Nonvoting.PublicKeyPem = string(idKey)
 	}
 
 	// Logging section.
@@ -210,7 +214,7 @@ func (s *katzenpost) genVotingAuthoritiesCfg(numAuthorities int) error {
 	configs := []*vConfig.Config{}
 
 	// initial generation of key material for each authority
-	peersMap := make(map[[eddsa.PublicKeySize]byte]*vConfig.AuthorityPeer)
+	peersMap := make(map[[32]byte]*vConfig.AuthorityPeer)
 	for i := 0; i < numAuthorities; i++ {
 		cfg := new(vConfig.Config)
 		cfg.Logging = &vConfig.Logging{
@@ -226,32 +230,26 @@ func (s *katzenpost) genVotingAuthoritiesCfg(numAuthorities int) error {
 		}
 		os.Mkdir(cfg.Authority.DataDir, 0700)
 		s.lastPort += 1
-		priv := filepath.Join(cfg.Authority.DataDir, "identity.private.pem")
-		public := filepath.Join(cfg.Authority.DataDir, "identity.public.pem")
-		idKey, err := eddsa.Load(priv, public, rand.Reader)
-		if err != nil {
-			return err
-		}
 		cfg.Debug = &vConfig.Debug{
-			IdentityKey:      idKey,
 			Layers:           3,
 			MinNodesPerLayer: 1,
 			GenerateOnly:     false,
 		}
 		configs = append(configs, cfg)
 		authorityPeer := &vConfig.AuthorityPeer{
-			IdentityPublicKey: apk(cfg),
-			LinkPublicKey:     alk(cfg),
-			Addresses:         cfg.Authority.Addresses,
+			IdentityPublicKeyPem: pem.ToPEMString(apk(cfg)),
+			LinkPublicKeyPem:     pem.ToPEMString(alk(cfg)),
+			Addresses:            cfg.Authority.Addresses,
 		}
-		peersMap[apk(cfg).ByteArray()] = authorityPeer
+		peersMap[apk(cfg).Sum256()] = authorityPeer
 	}
 
 	// tell each authority about it's peers
 	for i := 0; i < numAuthorities; i++ {
 		peers := []*vConfig.AuthorityPeer{}
 		for id, peer := range peersMap {
-			if !bytes.Equal(id[:], apk(configs[i]).Bytes()) {
+			hash := apk(configs[i]).Sum256()
+			if !bytes.Equal(id[:], hash[:]) {
 				peers = append(peers, peer)
 			}
 		}
@@ -267,14 +265,14 @@ func (s *katzenpost) generateWhitelist() ([]*aConfig.Node, []*aConfig.Node, erro
 	for _, nodeCfg := range s.nodeConfigs {
 		if nodeCfg.Server.IsProvider {
 			provider := &aConfig.Node{
-				Identifier:  nodeCfg.Server.Identifier,
-				IdentityKey: spk(nodeCfg),
+				Identifier:     nodeCfg.Server.Identifier,
+				IdentityKeyPem: pem.ToPEMString(spk(nodeCfg)),
 			}
 			providers = append(providers, provider)
 			continue
 		}
 		mix := &aConfig.Node{
-			IdentityKey: spk(nodeCfg),
+			IdentityKeyPem: pem.ToPEMString(spk(nodeCfg)),
 		}
 		mixes = append(mixes, mix)
 	}
@@ -288,14 +286,14 @@ func (s *katzenpost) generateVotingWhitelist() ([]*vConfig.Node, []*vConfig.Node
 	for _, nodeCfg := range s.nodeConfigs {
 		if nodeCfg.Server.IsProvider {
 			provider := &vConfig.Node{
-				Identifier:  nodeCfg.Server.Identifier,
-				IdentityKey: spk(nodeCfg),
+				Identifier:           nodeCfg.Server.Identifier,
+				IdentityPublicKeyPem: pem.ToPEMString(spk(nodeCfg)),
 			}
 			providers = append(providers, provider)
 			continue
 		}
 		mix := &vConfig.Node{
-			IdentityKey: spk(nodeCfg),
+			IdentityPublicKeyPem: pem.ToPEMString(spk(nodeCfg)),
 		}
 		mixes = append(mixes, mix)
 	}
@@ -444,35 +442,40 @@ func saveCfg(cfg interface{}, dataDir string) error {
 	return enc.Encode(cfg)
 }
 
-func apk(a *vConfig.Config) *eddsa.PublicKey {
-	priv := filepath.Join(a.Authority.DataDir, "identity.private.pem")
-	public := filepath.Join(a.Authority.DataDir, "identity.public.pem")
-	idKey, err := eddsa.Load(priv, public, rand.Reader)
+func apk(a *vConfig.Config) sign.PublicKey {
+	pubFile := filepath.Join(a.Authority.DataDir, "identity.public.pem")
+
+	_, identityPublicKey := cert.Scheme.NewKeypair()
+
+	err := pem.FromFile(pubFile, identityPublicKey)
 	if err != nil {
 		return nil
 	} else {
-		return idKey.PublicKey()
+		return identityPublicKey
 	}
 }
 
-func spk(a *sConfig.Config) *eddsa.PublicKey {
-	priv := filepath.Join(a.Server.DataDir, "identity.private.pem")
-	public := filepath.Join(a.Server.DataDir, "identity.public.pem")
-	idKey, err := eddsa.Load(priv, public, rand.Reader)
+func spk(a *sConfig.Config) sign.PublicKey {
+	pubFile := filepath.Join(a.Server.DataDir, "identity.public.pem")
+
+	_, identityPublicKey := cert.Scheme.NewKeypair()
+
+	err := pem.FromFile(pubFile, identityPublicKey)
 	if err != nil {
 		return nil
 	} else {
-		return idKey.PublicKey()
+		return identityPublicKey
 	}
 }
 
-func alk(a *vConfig.Config) *ecdh.PublicKey {
-	linkpriv := filepath.Join(a.Authority.DataDir, "link.private.pem")
-	linkpublic := filepath.Join(a.Authority.DataDir, "link.public.pem")
-	linkKey, err := ecdh.Load(linkpriv, linkpublic, rand.Reader)
+func alk(a *vConfig.Config) wire.PublicKey {
+	pubFile := filepath.Join(a.Authority.DataDir, "link.public.pem")
+
+	linkPublicKey, err := wire.DefaultScheme.PublicKeyFromPemFile(pubFile)
+
 	if err != nil {
 		return nil
 	} else {
-		return linkKey.PublicKey()
+		return linkPublicKey
 	}
 }
