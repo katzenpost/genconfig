@@ -444,38 +444,35 @@ func saveCfg(cfg interface{}, dataDir string) error {
 
 func apk(a *vConfig.Config) sign.PublicKey {
 	pubFile := filepath.Join(a.Authority.DataDir, "identity.public.pem")
+	privFile := filepath.Join(a.Authority.DataDir, "identity.private.pem")
 
-	_, identityPublicKey := cert.Scheme.NewKeypair()
+	identityPrivateKey, identityPublicKey := cert.Scheme.NewKeypair()
 
-	err := pem.FromFile(pubFile, identityPublicKey)
-	if err != nil {
-		return nil
-	} else {
-		return identityPublicKey
-	}
+	pem.ToFile(pubFile, identityPublicKey)
+	pem.ToFile(privFile, identityPrivateKey)
+
+	return identityPublicKey
 }
 
 func spk(a *sConfig.Config) sign.PublicKey {
 	pubFile := filepath.Join(a.Server.DataDir, "identity.public.pem")
+	privFile := filepath.Join(a.Server.DataDir, "identity.private.pem")
 
-	_, identityPublicKey := cert.Scheme.NewKeypair()
+	identityPrivateKey, identityPublicKey := cert.Scheme.NewKeypair()
 
-	err := pem.FromFile(pubFile, identityPublicKey)
-	if err != nil {
-		return nil
-	} else {
-		return identityPublicKey
-	}
+	pem.ToFile(pubFile, identityPublicKey)
+	pem.ToFile(privFile, identityPrivateKey)
+
+	return identityPublicKey
 }
 
 func alk(a *vConfig.Config) wire.PublicKey {
 	pubFile := filepath.Join(a.Authority.DataDir, "link.public.pem")
+	privFile := filepath.Join(a.Authority.DataDir, "link.private.pem")
 
-	linkPublicKey, err := wire.DefaultScheme.PublicKeyFromPemFile(pubFile)
+	kp := wire.DefaultScheme.GenerateKeypair(rand.Reader)
 
-	if err != nil {
-		return nil
-	} else {
-		return linkPublicKey
-	}
+	pem.ToFile(pubFile, kp.PublicKey())
+	pem.ToFile(privFile, kp)
+	return kp.PublicKey()
 }
